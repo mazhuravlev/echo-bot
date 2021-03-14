@@ -1,0 +1,16 @@
+cradle:
+  stack:
+    - path: "./src"
+      component: "echo-bot:lib"
+
+    - path: "./src/Main.hs"
+      component: "echo-bot:exe:echo-bot"
+
+    - path: "./src/LibModule.hs"
+      component: "echo-bot:exe:echo-bot"
+
+    - path: "./src/Paths_echo_bot.hs"
+      component: "echo-bot:exe:echo-bot"
+
+    - path: "./test"
+      component: "echo-bot:test:spec"

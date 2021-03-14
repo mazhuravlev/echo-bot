@@ -1,0 +1,41 @@
+name:                echo-bot
+version:             0.1.0.0
+#synopsis:
+#description:
+homepage:            https://github.com/githubuser/bitcoin#readme
+license:             BSD3
+author:              Author name here
+maintainer:          example@example.com
+copyright:           2021 Author name here
+category:            Web
+extra-source-files:
+- README.md
+
+dependencies:
+  - base >= 4.7 && < 5
+  - dhall
+  - aeson
+  - http-conduit
+  - bytestring
+  - text
+  - text-manipulate
+  - network-uri
+  - split
+
+library:
+  exposed: true
+  exposed-modules: 
+    - LibModule
+  source-dirs: src
+  ghc-options: -Wall
+
+executables:
+  echo-bot:
+    ghc-options: -Wall
+    source-dirs:      src
+    main:             Main.hs
+
+tests:
+  spec:
+    defaults: hspec/hspec@master
+    dependencies: echo-bot
