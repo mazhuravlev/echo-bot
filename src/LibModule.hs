@@ -5,7 +5,7 @@
 module LibModule where
 
 import Data.Aeson
-import Data.Char (isUpper)
+import Data.List (stripPrefix)
 import qualified Data.Text as Text
 import Data.Text.Manipulate (toCamel)
 import Dhall
@@ -18,7 +18,7 @@ data TgApiUrlGen =
     , sendMessage :: Int -> String -> TgApiUrl
     }
 
-mkTgApiUrlGen :: TelegramConfig -> TgApiUrlGen
+mkTgApiUrlGen :: BotConfig -> TgApiUrlGen
 mkTgApiUrlGen config =
   TgApiUrlGen {getUpdates = getUpdatesFn, sendMessage = sendMessageFn}
   where
@@ -43,7 +43,8 @@ data Chat =
 
 instance FromJSON Chat where
   parseJSON =
-    genericParseJSON defaultOptions {fieldLabelModifier = jsonFieldRemovePrefix}
+    genericParseJSON
+      defaultOptions {fieldLabelModifier = jsonFieldToCamelWithoutPrefix "chat"}
 
 data Message =
   Message
@@ -69,17 +70,68 @@ data Updates =
 
 instance FromJSON Updates where
   parseJSON =
-    genericParseJSON defaultOptions {fieldLabelModifier = jsonFieldRemovePrefix}
+    genericParseJSON
+      defaultOptions
+        {fieldLabelModifier = jsonFieldToCamelWithoutPrefix "updates"}
 
-data TelegramConfig =
-  TelegramConfig
+newtype SendMessageResult =
+  SendMessageResult
+    { sendMessageOk :: Bool
+    }
+  deriving (Show, Generic)
+
+instance FromJSON SendMessageResult where
+  parseJSON =
+    genericParseJSON
+      defaultOptions
+        {fieldLabelModifier = jsonFieldToCamelWithoutPrefix "sendMessage"}
+
+data BotConfig =
+  BotConfig
     { telegramToken :: String
     , telegramTimeout :: Natural
+    , botLogLevel :: LogLevel
     }
   deriving (Generic, Show)
 
-instance FromDhall TelegramConfig
+instance FromDhall BotConfig
 
-jsonFieldRemovePrefix :: [Char] -> [Char]
-jsonFieldRemovePrefix =
-  Text.unpack . toCamel . Text.pack . dropWhile (not . isUpper)
+jsonFieldToCamelWithoutPrefix :: [Char] -> [Char] -> [Char]
+jsonFieldToCamelWithoutPrefix prefix xs =
+  case stripPrefix prefix xs of
+    Just s -> Text.unpack . toCamel . Text.pack $ s
+    -- TODO: a error in json field label, figure out how to detect it with type system
+    Nothing -> error "Missing prefix: " ++ prefix
+
+type LogFn m = String -> m ()
+
+data Logger m =
+  Logger
+    { logError :: LogFn m
+    , logInfo :: LogFn m
+    , logDebug :: LogFn m
+    }
+
+data LogLevel
+  = ErrorLogLevel
+  | InfoLogLevel
+  | DebugLogLevel
+  deriving (Enum, Eq, Ord, Show, Generic)
+
+instance FromDhall LogLevel
+
+mkLogger :: Monad m => LogFn m -> LogFn m -> LogFn m -> LogLevel -> Logger m
+mkLogger errorFn infoFn debugFn logLevel =
+  Logger
+    { logError = getLogFn errorFn ErrorLogLevel
+    , logInfo = getLogFn infoFn InfoLogLevel
+    , logDebug = getLogFn debugFn DebugLogLevel
+    }
+  where
+    getLogFn fn level =
+      if level <= logLevel
+        then fn . (++) ("[" ++ levelStr level ++ "] ")
+        else const $ return ()
+    levelStr ErrorLogLevel = "ERROR"
+    levelStr InfoLogLevel = "INFO"
+    levelStr DebugLogLevel = "DEBUG"

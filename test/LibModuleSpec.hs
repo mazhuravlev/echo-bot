@@ -8,9 +8,10 @@ import LibModule
 import Network.URI (URI, parseURI, uriAuthority, uriQuery, uriRegName)
 import Test.Hspec
 
-testTelegramConfig :: TelegramConfig
+testTelegramConfig :: BotConfig
 testTelegramConfig =
-  TelegramConfig {telegramToken = "TOKEN", telegramTimeout = 3}
+  -- TODO: split configs
+  BotConfig {telegramToken = "TOKEN", telegramTimeout = 3}
 
 tgGen :: TgApiUrlGen
 tgGen = mkTgApiUrlGen testTelegramConfig
