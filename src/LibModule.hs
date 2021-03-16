@@ -119,7 +119,7 @@ data BotConfig =
   BotConfig
     { telegramConfig :: TelegramConfig
     , vkConfig :: VkConfig
-    , botmaxLevel :: maxLevel
+    , botLogLevel :: LogLevel
     , runVkBot :: Bool
     }
   deriving (Generic, Show, FromDhall)
@@ -218,26 +218,26 @@ data Logger m =
     , logDebug :: LogFn m
     }
 
-data maxLevel
-  = ErrormaxLevel
-  | InfomaxLevel
-  | DebugmaxLevel
+data LogLevel
+  = ErrorLogLevel
+  | InfoLogLevel
+  | DebugLogLevel
   deriving (Enum, Eq, Ord, Show, Generic)
 
-instance FromDhall maxLevel
+instance FromDhall LogLevel
 
-mkLogger :: Monad m => (maxLevel -> String -> m ()) -> maxLevel -> Logger m
+mkLogger :: Monad m => (LogLevel -> String -> m ()) -> LogLevel -> Logger m
 mkLogger printFn maxLevel =
   Logger
-    { logError = getLogFn printFn ErrormaxLevel
-    , logInfo = getLogFn printFn InfomaxLevel
-    , logDebug = getLogFn printFn DebugmaxLevel
+    { logError = getLogFn printFn ErrorLogLevel
+    , logInfo = getLogFn printFn InfoLogLevel
+    , logDebug = getLogFn printFn DebugLogLevel
     }
   where
     getLogFn fn level =
       if level <= maxLevel
         then fn level . (++) ("[" ++ levelStr level ++ "] ")
         else const $ return ()
-    levelStr ErrormaxLevel = "ERROR"
-    levelStr InfomaxLevel = "INFO"
-    levelStr DebugmaxLevel = "DEBUG"
+    levelStr ErrorLogLevel = "ERROR"
+    levelStr InfoLogLevel = "INFO"
+    levelStr DebugLogLevel = "DEBUG"
