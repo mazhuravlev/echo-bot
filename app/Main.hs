@@ -62,23 +62,38 @@ type VkUrlGen = (VkApiMethod -> [VkApiParam] -> VkApiUrl)
 
 startVkLoop :: Logger IO -> VkUrlGen -> String -> IO ()
 startVkLoop logger urlGen groupId = do
-  json <-
-    fetchJSON $ urlGen "groups.getLongPollServer" [("group_id", groupId)]
+  json <- fetchJSON $ urlGen "groups.getLongPollServer" [("group_id", groupId)]
   case eitherDecode (LBS.fromStrict json) :: Either String LongPollServer of
-     Right longPollServer -> do
+    Right longPollServer -> do
       logInfo logger "Received VK longpoll server info"
       let lpsr = longPollServerResponse longPollServer
-      vkLoop lpsr (read $ longPollServerResponseTs lpsr)
-     Left err -> logError logger $ "VK groups.getLongPollServer FAILED:\n" ++ err
+      let mkLpUrl =
+            vkLongpoll
+              (longPollServerResponseServer lpsr)
+              (longPollServerResponseKey lpsr)
+              "20" -- TODO: parametrize timeout
+      vkLoop mkLpUrl (longPollServerResponseTs lpsr)
+    Left err -> logError logger $ "VK groups.getLongPollServer FAILED:\n" ++ err
   where
-    vkLoop :: LongPollServerResponse -> Int -> IO ()
-    vkLoop lpsr ts = do
-      logInfo logger "NOOP"
-      threadDelay 10000000
-      vkLoop lpsr ts
+    vkLoop mkUrl ts = do
+      lpJson <- fetchJSON $ mkUrl ts
+      case eitherDecode (LBS.fromStrict lpJson) :: Either String VkUpdates of
+        Right updates -> do
+          logInfo logger $
+            "VK receive updates OK, ts = " ++ show (vkUpdatesTs updates)
+          vkLoop mkUrl (vkUpdatesTs updates)
+        Left err -> do
+          logError logger $ "VK receive updates FAIL:\n" ++ err ++ "\n"
+          threadDelay 5000000
+          vkLoop mkUrl ts
 
 printStderr :: String -> IO ()
-printStderr = hPutStrLn stderr
+printStderr =hPutStrLn stderr
+
+logFn :: LogLevel -> String -> IO ()
+logFn level 
+  | level == ErrorLogLevel = printStderr
+  | otherwise  = putStrLn
 
 main :: IO ()
 main = do
@@ -86,7 +101,7 @@ main = do
     try (input auto "./config.dhall") :: IO (Either SomeException BotConfig)
   case maybeBotConfig of
     Right config -> do
-      let logger = mkLogger printStderr putStrLn putStrLn (botLogLevel config)
+      let logger = mkLogger logFn (botLogLevel config)
       logInfo logger "Bot started"
       if runVkBot config
         then do
