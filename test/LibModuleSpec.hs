@@ -4,12 +4,13 @@ module LibModuleSpec
 
 import Data.List.Split (splitOn)
 import Data.Maybe (fromJust)
-import LibModule
 import Network.URI (URI, parseURI, uriAuthority, uriQuery, uriRegName)
 import Test.Hspec
+import LibModule
+import qualified Types as T
 
-testTelegramConfig :: TelegramConfig
-testTelegramConfig =  TelegramConfig {telegramToken = "TOKEN", telegramTimeout = 3}
+testTelegramConfig :: T.TelegramConfig
+testTelegramConfig =  T.TelegramConfig {T.telegramToken = "TOKEN", T.telegramTimeout = 3}
 
 tgGen :: TgApiUrlGen
 tgGen = mkTgApiUrlGen testTelegramConfig

@@ -9,12 +9,14 @@ dependencies:
   - bytestring
   - text
   - text-manipulate
+  - random
 
 library:
   ghc-options:
     - -Wall
   exposed-modules: 
     - LibModule
+    - Types
   source-dirs: src
 
 executables:
