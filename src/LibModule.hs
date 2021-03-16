@@ -5,10 +5,26 @@
 module LibModule where
 
 import Data.Aeson
-import Data.List (stripPrefix)
+  ( FromJSON(parseJSON)
+  , Options(fieldLabelModifier)
+  , ToJSON
+  , defaultOptions
+  , genericParseJSON
+  )
+import Data.List (intercalate, stripPrefix)
 import qualified Data.Text as Text
 import Data.Text.Manipulate (toCamel)
-import Dhall
+import Dhall (FromDhall, Generic, Natural)
+
+type VkApiUrl = String
+
+genVkApiUrl :: String -> [Char] -> [(String, String)] -> String
+genVkApiUrl token method params =
+  concat ["https://api.vk.com/method/", method, "?", paramString]
+  where
+    paramString =
+      intercalate "&" . map (\(k, v) -> k ++ "=" ++ v) $
+      ("access_token", token) : ("v", "5.139") : params
 
 type TgApiUrl = String
 
@@ -18,7 +34,7 @@ data TgApiUrlGen =
     , sendMessage :: Int -> String -> TgApiUrl
     }
 
-mkTgApiUrlGen :: BotConfig -> TgApiUrlGen
+mkTgApiUrlGen :: TelegramConfig -> TgApiUrlGen
 mkTgApiUrlGen config =
   TgApiUrlGen {getUpdates = getUpdatesFn, sendMessage = sendMessageFn}
   where
@@ -86,15 +102,59 @@ instance FromJSON SendMessageResult where
       defaultOptions
         {fieldLabelModifier = jsonFieldToCamelWithoutPrefix "sendMessage"}
 
-data BotConfig =
-  BotConfig
+data TelegramConfig =
+  TelegramConfig
     { telegramToken :: String
     , telegramTimeout :: Natural
-    , botLogLevel :: LogLevel
     }
-  deriving (Generic, Show)
+  deriving (Generic, Show, FromDhall)
 
-instance FromDhall BotConfig
+data VkConfig =
+  VkConfig
+    { vkToken :: String
+    , vkGroupId :: String
+    , vkTimeout :: Natural
+    }
+  deriving (Generic, Show, FromDhall)
+
+data BotConfig =
+  BotConfig
+    { telegramConfig :: TelegramConfig
+    , vkConfig :: VkConfig
+    , botLogLevel :: LogLevel
+    , runVkBot :: Bool
+    }
+  deriving (Generic, Show, FromDhall)
+
+data LongPollServerResponse = LongPollServerResponse {
+  longPollServerResponseKey :: String,
+  longPollServerResponseServer :: String,
+  longPollServerResponseTs :: String
+} deriving (Generic, Show)
+
+instance FromJSON LongPollServerResponse where
+  parseJSON =
+    genericParseJSON
+      defaultOptions
+        {fieldLabelModifier = jsonFieldToCamelWithoutPrefix "longPollServerResponse"}
+
+newtype LongPollServer = LongPollServer {
+  longPollServerResponse :: LongPollServerResponse
+} deriving (Generic, Show)
+
+instance FromJSON LongPollServer where
+  parseJSON =
+    genericParseJSON
+      defaultOptions
+        {fieldLabelModifier = jsonFieldToCamelWithoutPrefix "longPollServer"}
+
+-- {
+-- "response": {
+-- "key": "3d55ca8a84ef1a2efd5b2a301f293477e3a57c79",
+-- "server": "https://lp.vk.com/wh203297778",
+-- "ts": "3"
+-- }
+-- }
 
 jsonFieldToCamelWithoutPrefix :: [Char] -> [Char] -> [Char]
 jsonFieldToCamelWithoutPrefix prefix xs =

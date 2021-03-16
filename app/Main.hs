@@ -3,6 +3,7 @@
 
 module Main where
 
+import Control.Concurrent
 import Control.Exception (SomeException, try)
 import Data.Aeson (eitherDecode)
 import qualified Data.ByteString.Char8 as BS
@@ -53,6 +54,29 @@ tgLoop logger urlGen offset = do
       "Received " ++
       (show . length . updatesResult $ updates') ++ " Telegram updates"
 
+type VkApiMethod = String
+
+type VkApiParam = (String, String)
+
+type VkUrlGen = (VkApiMethod -> [VkApiParam] -> VkApiUrl)
+
+startVkLoop :: Logger IO -> VkUrlGen -> String -> IO ()
+startVkLoop logger urlGen groupId = do
+  json <-
+    fetchJSON $ urlGen "groups.getLongPollServer" [("group_id", groupId)]
+  case eitherDecode (LBS.fromStrict json) :: Either String LongPollServer of
+     Right longPollServer -> do
+      logInfo logger "Received VK longpoll server info"
+      let lpsr = longPollServerResponse longPollServer
+      vkLoop lpsr (read $ longPollServerResponseTs lpsr)
+     Left err -> logError logger $ "VK groups.getLongPollServer FAILED:\n" ++ err
+  where
+    vkLoop :: LongPollServerResponse -> Int -> IO ()
+    vkLoop lpsr ts = do
+      logInfo logger "NOOP"
+      threadDelay 10000000
+      vkLoop lpsr ts
+
 printStderr :: String -> IO ()
 printStderr = hPutStrLn stderr
 
@@ -64,6 +88,16 @@ main = do
     Right config -> do
       let logger = mkLogger printStderr putStrLn putStrLn (botLogLevel config)
       logInfo logger "Bot started"
-      tgLoop logger (mkTgApiUrlGen config) 0
+      if runVkBot config
+        then do
+          logInfo logger "Starting VK Bot"
+          let vkConf = vkConfig config
+           in startVkLoop
+                logger
+                (genVkApiUrl $ vkToken vkConf)
+                (vkGroupId vkConf)
+        else do
+          logInfo logger "Starting Telegtam Bot"
+          tgLoop logger (mkTgApiUrlGen . telegramConfig $ config) 0
     Left err -> do
       printStderr $ "BotConfig read error:\n" ++ show err
