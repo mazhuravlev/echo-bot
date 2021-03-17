@@ -3,11 +3,16 @@
 
 module Main where
 
-import Control.Concurrent ( threadDelay )
+import Control.Concurrent (threadDelay)
 import Control.Exception (SomeException, try)
+import Control.Monad.State
 import Data.Aeson (eitherDecode)
 import qualified Data.ByteString.Char8 as BS
 import qualified Data.ByteString.Lazy as LBS
+import Data.Char (isDigit)
+import qualified Data.Map as Map
+import Data.Maybe (fromMaybe)
+import Data.Time (getCurrentTime)
 import Dhall (auto, input)
 import GHC.IO.Handle.FD (stderr)
 import qualified LibModule as L
@@ -15,7 +20,6 @@ import Network.HTTP.Simple (getResponseBody, getResponseStatus, httpBS, parseReq
 import Network.HTTP.Types (Status)
 import System.IO (hPutStrLn)
 import System.Random (randomIO)
-import Data.Time (getCurrentTime)
 import qualified Types as T
 
 -- TODO: add configurable timeout for longpolling support
@@ -25,29 +29,59 @@ fetchJSON url = do
   res <- httpBS req
   return (getResponseStatus res, getResponseBody res)
 
-tgSendEcho :: L.Logger IO -> L.TgApi IO -> (Int, String) -> IO ()
-tgSendEcho logger tgApi (chatid, messageText) = do
-  sendResult <- L.tgSendMessage tgApi chatid messageText
-  case sendResult of
-    Left err -> L.logError logger $ "Telegram.sendMessage FAIL decoding json response: " ++ err
-    Right _ -> L.logInfo logger $ "Telegram.sendMessage OK chat_id " ++ show chatid
+data CommpandOp = Repeat Int | ReplyOnce | Reply
 
-tgLoop :: L.Logger IO -> L.TgApi IO -> Int -> IO ()
-tgLoop logger tgApi offset = do
-  eitherUpdates <- L.tgGetUpdates tgApi offset
-  L.logInfo logger $ "offset is " ++ show offset
+newRepeatCount :: CommpandOp -> Int -> Int
+newRepeatCount (Repeat n) _ = n
+newRepeatCount _ x = x
+
+repeatCount :: CommpandOp -> Int -> Int
+repeatCount Reply n = n
+repeatCount _ _ = 1
+
+parseNumber :: [Char] -> Maybe Int
+parseNumber x = if null digits then Nothing else Just . read $ digits
+  where
+    digits = filter isDigit x
+
+tgProcessMessage :: L.Logger IO -> L.TgApi IO -> UserMap -> (Int, String) -> IO UserMap
+tgProcessMessage logger tgApi userMap (chatid, messageText) = do
+  (op, msg) <- case messageText of
+    "/help" -> return (ReplyOnce, "this is help message!")
+    ('/' : 'r' : 'e' : 'p' : 'e' : 'a' : 't' : ' ' : (parseNumber -> Just n)) -> return (Repeat n, "New repeat setting stored: " ++ show n)
+    _ -> return (Reply, messageText)
+  let storedRptCnt = fromMaybe 3 (Map.lookup chatid userMap)
+  let newRepCnt = newRepeatCount op storedRptCnt
+  replicateM_ (repeatCount op newRepCnt) (doSendMsg msg)
+  return $ Map.insert chatid newRepCnt userMap
+  where
+    doSendMsg msg' = do
+      sendResult <- L.tgSendMessage tgApi chatid msg'
+      case sendResult of
+        Left err -> L.logError logger $ "Telegram.sendMessage FAIL decoding json response: " ++ err
+        Right _ -> L.logInfo logger $ "Telegram.sendMessage OK chat_id " ++ show chatid
+
+type UserMap = Map.Map Int Int
+
+type TgState m = (L.Logger m, L.TgApi m, UserMap)
+
+tgLoop :: Int -> StateT (TgState IO) IO ()
+tgLoop offset = do
+  (logger, api, userMap) <- get
+  eitherUpdates <- lift (L.tgGetUpdates api offset)
   case eitherUpdates of
     Right updates -> do
-      logReceivedUpdates updates
-      mapM_ (tgSendEcho logger tgApi) $ L.tgGetChats updates
-      tgLoop logger tgApi (L.tgNextOffset offset updates)
-    Left err -> L.logError logger $ "Failed to get updates: " ++ err 
+      lift ((if null updates then L.logDebug else L.logInfo) logger $ formatUpdatesLog updates)
+      userMap' <- lift (foldM (tgProcessMessage logger api) userMap $ L.tgGetChats updates)
+      put (logger, api, userMap')
+      tgLoop (L.tgNextOffset offset updates)
+    Left err -> lift (L.logError logger $ "Failed to get updates: " ++ err)
+  return ()
   where
-    logReceivedUpdates updates' =
-      L.logInfo logger $
-        "Received "
-          ++ (show . length $ updates')
-          ++ " Telegram updates"
+    formatUpdatesLog updates' =
+      "Received "
+        ++ (show . length $ updates')
+        ++ " Telegram updates"
 
 vkSendEcho :: L.Logger IO -> L.VkUrlGen -> T.VkUpdate -> IO ()
 vkSendEcho logger urlGen update = do
@@ -67,7 +101,7 @@ vkSendEcho logger urlGen update = do
 
 startVkLoop :: L.Logger IO -> L.VkUrlGen -> String -> IO ()
 startVkLoop logger urlGen groupId = do
-  (_,json) <- fetchJSON $ urlGen "groups.getLongPollServer" [("group_id", groupId)]
+  (_, json) <- fetchJSON $ urlGen "groups.getLongPollServer" [("group_id", groupId)]
   case eitherDecode (LBS.fromStrict json) :: Either String T.LongPollServer of
     Right longPollServer -> do
       L.logInfo logger "Received VK longpoll server info"
@@ -81,7 +115,7 @@ startVkLoop logger urlGen groupId = do
     Left err -> L.logError logger $ "VK groups.getLongPollServer FAILED:\n" ++ err
   where
     vkLoop mkUrl ts = do
-      (_,lpJson) <- fetchJSON $ mkUrl ts
+      (_, lpJson) <- fetchJSON $ mkUrl ts
       case eitherDecode (LBS.fromStrict lpJson) :: Either String T.VkUpdates of
         Right updates -> do
           L.logInfo logger $
@@ -119,6 +153,6 @@ main = do
                 (T.vkGroupId vkConf)
         else do
           L.logInfo logger "Starting Telegtam Bot"
-          tgLoop logger (L.mkTgApi (T.telegramConfig config) (fmap snd <$> fetchJSON)) 0
+          evalStateT (tgLoop 0) (logger, L.mkTgApi (T.telegramConfig config) (fmap snd <$> fetchJSON), Map.empty)
     Left err -> do
       printStderr $ "BotConfig read error:\n" ++ show err

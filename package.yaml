@@ -15,6 +15,7 @@ dependencies:
   - lens-aeson
   - time
   - mtl
+  - containers
 
 library:
   ghc-options:

@@ -48,17 +48,17 @@ mkTgApi config httpReq = TgApi {tgGetUpdates = getUpdatesFn, tgSendMessage = sen
     getUpdatesFn offset = do
       updatesJson <- httpReq $ getUpdatesUrl urlGen offset
       return $ case eitherDecode (LBS.fromStrict updatesJson) :: Either String T.Updates of
-        Left err -> jsonDecodeError err
+        Left err -> jsonDecodeError err updatesJson
         Right updates@(T.updatesOk -> True) -> Right . T.updatesResult $ updates
         _ -> Left "Unexpected error occured on receveing updates"
     sendMessageFn chatId msg = do
       messageResultjson <- httpReq $ sendMessageUrl urlGen chatId msg
       return $ case eitherDecode (LBS.fromStrict messageResultjson) :: Either String T.SendMessageResult of
-        Left err -> jsonDecodeError err
+        Left err -> jsonDecodeError err messageResultjson
         Right (T.sendMessageOk -> True) -> Right $ "Message sent to chat " ++ show chatId
         _ -> Left $ "Failed to send message to chat " ++ show chatId
     urlGen = mkTgApiUrlGen config
-    jsonDecodeError json = Left $ "Response JSON decode error: " ++ json
+    jsonDecodeError err json = Left $ "Response JSON decode error: " ++ err ++ show json
 
 tgGetChats :: [T.Update] -> [(Int, String)]
 tgGetChats = map ((\x -> (T.chatId . T.chat $ x, T.text x)) . T.message)
