@@ -1,16 +1,25 @@
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE ViewPatterns #-}
 
 module LibModule where
 
 import Control.Lens (preview)
+import Data.Aeson (eitherDecode)
 import Data.Aeson.Lens (AsNumber (_Number), key, _String)
 import qualified Data.ByteString.Char8 as BS
+import qualified Data.ByteString.Lazy as LBS
 import Data.List (intercalate)
 import Data.Text (unpack)
 import Data.Time (UTCTime)
 import qualified Types as T
 
 type VkApiUrl = String
+
+type VkApiMethod = String
+
+type VkApiParam = (String, String)
+
+type VkUrlGen = (VkApiMethod -> [VkApiParam] -> VkApiUrl)
 
 genVkApiUrl :: String -> String -> [(String, String)] -> String
 genVkApiUrl token method params =
@@ -26,20 +35,46 @@ vkLongpoll server skey timeout ts =
 
 type TgApiUrl = String
 
-type VkApiMethod = String
+type TgChatId = Int
 
-type VkApiParam = (String, String)
+data TgApi m = TgApi
+  { tgGetUpdates :: Int -> m (Either String [T.Update]),
+    tgSendMessage :: TgChatId -> String -> m (Either String String)
+  }
 
-type VkUrlGen = (VkApiMethod -> [VkApiParam] -> VkApiUrl)
+mkTgApi :: Monad m => T.TelegramConfig -> (String -> m BS.ByteString) -> TgApi m
+mkTgApi config httpReq = TgApi {tgGetUpdates = getUpdatesFn, tgSendMessage = sendMessageFn}
+  where
+    getUpdatesFn offset = do
+      updatesJson <- httpReq $ getUpdatesUrl urlGen offset
+      return $ case eitherDecode (LBS.fromStrict updatesJson) :: Either String T.Updates of
+        Left err -> jsonDecodeError err
+        Right updates@(T.updatesOk -> True) -> Right . T.updatesResult $ updates
+        _ -> Left "Unexpected error occured on receveing updates"
+    sendMessageFn chatId msg = do
+      messageResultjson <- httpReq $ sendMessageUrl urlGen chatId msg
+      return $ case eitherDecode (LBS.fromStrict messageResultjson) :: Either String T.SendMessageResult of
+        Left err -> jsonDecodeError err
+        Right (T.sendMessageOk -> True) -> Right $ "Message sent to chat " ++ show chatId
+        _ -> Left $ "Failed to send message to chat " ++ show chatId
+    urlGen = mkTgApiUrlGen config
+    jsonDecodeError json = Left $ "Response JSON decode error: " ++ json
+
+tgGetChats :: [T.Update] -> [(Int, String)]
+tgGetChats = map ((\x -> (T.chatId . T.chat $ x, T.text x)) . T.message)
+
+tgNextOffset :: Int -> [T.Update] -> Int
+tgNextOffset offset [] = offset
+tgNextOffset _ updates = (+ 1) . foldr (max . T.update_id) 0 $ updates
 
 data TgApiUrlGen = TgApiUrlGen
-  { getUpdates :: Int -> TgApiUrl,
-    sendMessage :: Int -> String -> TgApiUrl
+  { getUpdatesUrl :: Int -> TgApiUrl,
+    sendMessageUrl :: TgChatId -> String -> TgApiUrl
   }
 
 mkTgApiUrlGen :: T.TelegramConfig -> TgApiUrlGen
 mkTgApiUrlGen config =
-  TgApiUrlGen {getUpdates = getUpdatesFn, sendMessage = sendMessageFn}
+  TgApiUrlGen {getUpdatesUrl = getUpdatesFn, sendMessageUrl = sendMessageFn}
   where
     tgBaseUrl = "https://api.telegram.org/bot" ++ T.telegramToken config
     getUpdatesFn offset =

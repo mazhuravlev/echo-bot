@@ -8,7 +8,6 @@ import Control.Exception (SomeException, try)
 import Data.Aeson (eitherDecode)
 import qualified Data.ByteString.Char8 as BS
 import qualified Data.ByteString.Lazy as LBS
-import Data.Maybe (listToMaybe)
 import Dhall (auto, input)
 import GHC.IO.Handle.FD (stderr)
 import qualified LibModule as L
@@ -26,37 +25,28 @@ fetchJSON url = do
   res <- httpBS req
   return (getResponseStatus res, getResponseBody res)
 
-tgSendEcho :: L.Logger IO -> L.TgApiUrlGen -> (Int, String) -> IO ()
-tgSendEcho logger urlGen (chatid, messageText) = do
-  (_,json) <- fetchJSON $ L.sendMessage urlGen chatid messageText
-  case eitherDecode (LBS.fromStrict json) :: Either String T.SendMessageResult of
-    Right (T.sendMessageOk -> True) ->
-      L.logInfo logger $ "Telegram.sendMessage OK chat_id " ++ show chatid
-    Right _ ->
-      L.logError logger $ "Telegram.sendMessage FAIL chat_id " ++ show chatid
-    Left err ->
-      L.logError logger $
-        "Telegram.sendMessage FAIL decoding json response: " ++ err
-  return ()
+tgSendEcho :: L.Logger IO -> L.TgApi IO -> (Int, String) -> IO ()
+tgSendEcho logger tgApi (chatid, messageText) = do
+  sendResult <- L.tgSendMessage tgApi chatid messageText
+  case sendResult of
+    Left err -> L.logError logger $ "Telegram.sendMessage FAIL decoding json response: " ++ err
+    Right _ -> L.logInfo logger $ "Telegram.sendMessage OK chat_id " ++ show chatid
 
-tgLoop :: L.Logger IO -> L.TgApiUrlGen -> Int -> IO ()
-tgLoop logger urlGen offset = do
-  (_,json) <- fetchJSON $ L.getUpdates urlGen offset
-  case eitherDecode (LBS.fromStrict json) :: Either String T.Updates of
+tgLoop :: L.Logger IO -> L.TgApi IO -> Int -> IO ()
+tgLoop logger tgApi offset = do
+  eitherUpdates <- L.tgGetUpdates tgApi offset
+  L.logInfo logger $ "offset is " ++ show offset
+  case eitherUpdates of
     Right updates -> do
       logReceivedUpdates updates
-      mapM_ (tgSendEcho logger urlGen) $ getChats updates
-      tgLoop logger urlGen $ getNextOffset updates
-    Left err -> L.logError logger $ "Failed to get updates: " ++ err
+      mapM_ (tgSendEcho logger tgApi) $ L.tgGetChats updates
+      tgLoop logger tgApi (L.tgNextOffset offset updates)
+    Left err -> L.logError logger $ "Failed to get updates: " ++ err 
   where
-    getChats =
-      map ((\x -> (T.chatId . T.chat $ x, T.text x)) . T.message) . T.updatesResult
-    getNextOffset =
-      maybe offset (+ 1) . listToMaybe . map T.update_id . T.updatesResult
     logReceivedUpdates updates' =
-      L.logDebug logger $
+      L.logInfo logger $
         "Received "
-          ++ (show . length . T.updatesResult $ updates')
+          ++ (show . length $ updates')
           ++ " Telegram updates"
 
 vkSendEcho :: L.Logger IO -> L.VkUrlGen -> T.VkUpdate -> IO ()
@@ -129,6 +119,6 @@ main = do
                 (T.vkGroupId vkConf)
         else do
           L.logInfo logger "Starting Telegtam Bot"
-          tgLoop logger (L.mkTgApiUrlGen . T.telegramConfig $ config) 0
+          tgLoop logger (L.mkTgApi (T.telegramConfig config) (fmap snd <$> fetchJSON)) 0
     Left err -> do
       printStderr $ "BotConfig read error:\n" ++ show err

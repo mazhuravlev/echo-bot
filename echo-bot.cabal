@@ -4,7 +4,7 @@ cabal-version: 1.12
 --
 -- see: https://github.com/sol/hpack
 --
--- hash: 99cb66146bd75df0fc39433317d53906578ad7a56bdc0985caff860a3608a136
+-- hash: a34b307e2c4e0e8cc576c70350a44da0c547614aa653f4f1c7bf38bb4791372b
 
 name:           echo-bot
 version:        0.1.0.0
@@ -28,6 +28,7 @@ library
     , http-types
     , lens
     , lens-aeson
+    , mtl
     , random
     , text
     , text-manipulate
@@ -51,6 +52,7 @@ executable echo-bot-exe
     , http-types
     , lens
     , lens-aeson
+    , mtl
     , random
     , text
     , text-manipulate
@@ -76,6 +78,7 @@ test-suite spec
     , http-types
     , lens
     , lens-aeson
+    , mtl
     , network-uri
     , random
     , split

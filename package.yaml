@@ -14,6 +14,7 @@ dependencies:
   - lens
   - lens-aeson
   - time
+  - mtl
 
 library:
   ghc-options:
