@@ -5,11 +5,15 @@ dependencies:
   - base >= 4.7 && < 5
   - aeson
   - http-conduit
+  - http-types
   - dhall
   - bytestring
   - text
   - text-manipulate
   - random
+  - lens
+  - lens-aeson
+  - time
 
 library:
   ghc-options:
