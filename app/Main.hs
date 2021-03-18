@@ -27,35 +27,6 @@ fetchJSON url = do
   res <- httpBS req
   return (getResponseStatus res, getResponseBody res)
 
-type TgState m = (L.Logger m, L.TgApi m, L.UserMap)
-
-tgState :: Monad m => StateT (TgState m) m (TgState m)
-tgState = do get
-
-tgLogger :: Monad m => StateT (TgState m) m (L.Logger m)
-tgLogger = do
-  (l, _, _) <- tgState
-  return l
-
-tgLoop :: Int -> StateT (TgState IO) IO ()
-tgLoop offset = do
-  (_, api, userMap) <- get
-  logger <- tgLogger
-  eitherUpdates <- lift (L.tgGetUpdates api offset)
-  case eitherUpdates of
-    Right updates -> do
-      lift ((if null updates then L.logDebug else L.logInfo) logger $ formatUpdatesLog updates)
-      userMap' <- lift (foldM (L.tgProcessMessage logger api) userMap $ L.tgGetChats updates)
-      put (logger, api, userMap')
-      tgLoop (L.tgNextOffset offset updates)
-    Left err -> lift (L.logError logger $ "Failed to get updates: " ++ err)
-  return ()
-  where
-    formatUpdatesLog updates' =
-      "Received "
-        ++ (show . length $ updates')
-        ++ " Telegram updates"
-
 vkSendEcho :: L.Logger IO -> L.VkUrlGen -> T.VkUpdate -> IO ()
 vkSendEcho logger urlGen update = do
   rnd <- randomIO :: IO Int
@@ -100,14 +71,6 @@ startVkLoop logger urlGen groupId = do
           threadDelay 5000000
           vkLoop mkUrl ts
 
-printStderr :: String -> IO ()
-printStderr = hPutStrLn stderr
-
-logFn :: T.LogLevel -> String -> IO ()
-logFn level
-  | level == T.ErrorLogLevel = printStderr
-  | otherwise = putStrLn
-
 main :: IO ()
 main = do
   maybeBotConfig <-
@@ -115,17 +78,21 @@ main = do
   case maybeBotConfig of
     Right config -> do
       let logger = L.mkLogger logFn (T.botLogLevel config) getCurrentTime
-      L.logInfo logger "Bot started"
-      if T.runVkBot config
-        then do
-          L.logInfo logger "Starting VK Bot"
+      L.logInfo logger $ "Starting " ++ show (T.botType config) ++ " bot"
+      case T.botType config of
+        T.VK -> do
           let vkConf = T.vkConfig config
            in startVkLoop
                 logger
                 (L.genVkApiUrl $ T.vkToken vkConf)
                 (T.vkGroupId vkConf)
-        else do
-          L.logInfo logger "Starting Telegtam Bot"
-          evalStateT (tgLoop 0) (logger, L.mkTgApi (T.telegramConfig config) (fmap snd <$> fetchJSON), Map.empty)
+        T.Telegram -> do
+          evalStateT (L.tgLoop 0) (logger, L.mkTgApi (T.telegramConfig config) httpFn, Map.empty)
     Left err -> do
       printStderr $ "BotConfig read error:\n" ++ show err
+  where
+    logFn level
+      | level == T.ErrorLogLevel = printStderr
+      | otherwise = putStrLn
+    printStderr = hPutStrLn stderr
+    httpFn = fmap snd <$> fetchJSON

@@ -4,7 +4,7 @@
 module LibModule where
 
 import Control.Lens (preview)
-import Control.Monad (replicateM_)
+import Control.Monad.State
 import Data.Aeson (eitherDecode)
 import Data.Aeson.Lens (AsNumber (_Number), key, _String)
 import qualified Data.ByteString.Char8 as BS
@@ -158,3 +158,34 @@ parseNumber :: [Char] -> Maybe Int
 parseNumber x = if null digits then Nothing else Just . read $ digits
   where
     digits = filter isDigit x
+
+type TgState m = (Logger m, TgApi m, UserMap)
+
+tgState :: Monad m => StateT (TgState m) m (TgState m)
+tgState = do get
+
+tgLogger :: Monad m => StateT (TgState m) m (Logger m)
+tgLogger = do
+  (l, _, _) <- tgState
+  return l
+
+tgLoop :: Monad m => Int -> StateT (TgState m) m ()
+tgLoop offset = do
+  (_, api, userMap) <- get
+  logger <- tgLogger
+  eitherUpdates <- lift (tgGetUpdates api offset)
+  case eitherUpdates of
+    Right updates -> do
+      lift ((if null updates then logDebug else logInfo) logger $ formatUpdatesLog updates)
+      userMap' <- lift (foldM (tgProcessMessage logger api) userMap $ tgGetChats updates)
+      put (logger, api, userMap')
+      tgLoop (tgNextOffset offset updates)
+    Left err -> do 
+      lift (logError logger $ "Failed to get updates: " ++ err)
+      tgLoop offset
+  return ()
+  where
+    formatUpdatesLog updates' =
+      "Received "
+        ++ (show . length $ updates')
+        ++ " Telegram updates"

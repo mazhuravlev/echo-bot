@@ -26,11 +26,13 @@ data VkConfig = VkConfig
   }
   deriving (Generic, Show, FromDhall)
 
+data BotType = VK | Telegram deriving (Show, Generic, FromDhall)
+
 data BotConfig = BotConfig
   { telegramConfig :: TelegramConfig,
     vkConfig :: VkConfig,
     botLogLevel :: LogLevel,
-    runVkBot :: Bool
+    botType :: BotType
   }
   deriving (Generic, Show, FromDhall)
 
