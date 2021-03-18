@@ -24,7 +24,8 @@ library:
     - -Wall
   exposed-modules:
     - LibModule
-    - Types
+    - Telegram
+    - Vk
   source-dirs: src
 
 executables:
@@ -35,6 +36,9 @@ executables:
       - -Wall
     dependencies:
       - echo-bot
+    when:
+      - condition: false
+        other-modules: Paths_echo_bot
 
 tests:
   spec:
@@ -43,3 +47,6 @@ tests:
       - echo-bot
       - network-uri
       - split
+    when:
+      - condition: false
+        other-modules: Paths_echo_bot

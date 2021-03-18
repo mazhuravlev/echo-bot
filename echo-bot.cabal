@@ -4,7 +4,7 @@ cabal-version: 1.12
 --
 -- see: https://github.com/sol/hpack
 --
--- hash: eec6fa81475ab9ee4cf2c907ffcb626e83b43844525744b43f606fb5970af2a8
+-- hash: f82fe87103d0de922177b81bb9191b753af7746280ab88fb09ff27456afc6982
 
 name:           echo-bot
 version:        0.1.0.0
@@ -13,7 +13,8 @@ build-type:     Simple
 library
   exposed-modules:
       LibModule
-      Types
+      Telegram
+      Vk
   other-modules:
       Paths_echo_bot
   hs-source-dirs:
@@ -40,8 +41,6 @@ library
 
 executable echo-bot-exe
   main-is: Main.hs
-  other-modules:
-      Paths_echo_bot
   hs-source-dirs:
       app
   ghc-options: -Wall
@@ -63,6 +62,9 @@ executable echo-bot-exe
     , text-manipulate
     , time
     , unordered-containers
+  if false
+    other-modules:
+        Paths_echo_bot
   default-language: Haskell2010
 
 test-suite spec
@@ -71,7 +73,6 @@ test-suite spec
   other-modules:
       LibModuleSpec
       TypesSpec
-      Paths_echo_bot
   hs-source-dirs:
       test
   build-depends:
@@ -95,5 +96,8 @@ test-suite spec
     , text-manipulate
     , time
     , unordered-containers
+  if false
+    other-modules:
+        Paths_echo_bot
   default-language: Haskell2010
   build-tool-depends: hspec-discover:hspec-discover == 2.*
