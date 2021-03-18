@@ -1,17 +1,18 @@
 module LibModuleSpec
-  ( spec
-  ) where
+  ( spec,
+  )
+where
 
+import qualified Data.ByteString.Char8 as BS
 import Data.List.Split (splitOn)
 import Data.Maybe (fromJust)
+import qualified LibModule as L
 import Network.URI (URI, parseURI, uriAuthority, uriQuery, uriRegName)
 import Test.Hspec
-import qualified LibModule as L
 import qualified Types as T
-import qualified Data.ByteString.Char8 as BS
 
 testTelegramConfig :: T.TelegramConfig
-testTelegramConfig =  T.TelegramConfig {T.telegramToken = "TOKEN", T.telegramTimeout = 3}
+testTelegramConfig = T.TelegramConfig {T.telegramToken = "TOKEN", T.telegramTimeout = 3}
 
 tgGen :: L.TgApiUrlGen
 tgGen = L.mkTgApiUrlGen testTelegramConfig

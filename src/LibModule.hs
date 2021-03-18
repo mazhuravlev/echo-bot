@@ -4,11 +4,15 @@
 module LibModule where
 
 import Control.Lens (preview)
+import Control.Monad (replicateM_)
 import Data.Aeson (eitherDecode)
 import Data.Aeson.Lens (AsNumber (_Number), key, _String)
 import qualified Data.ByteString.Char8 as BS
 import qualified Data.ByteString.Lazy as LBS
+import Data.Char (isDigit)
 import Data.List (intercalate)
+import qualified Data.Map as Map
+import Data.Maybe (fromMaybe)
 import Data.Text (unpack)
 import Data.Time (UTCTime)
 import qualified Types as T
@@ -120,3 +124,37 @@ parseVkMessageSendResult json = maybe err Right okMaybe
     errorCode = round <$> preview (key "error" . key "error_code" . _Number) json :: Maybe Int
     errMaybe = (\m c -> unpack m ++ "; error code: " ++ show c) <$> errorMsg <*> errorCode
     err = maybe (Left $ "Unexpected error on json: " ++ show json) Left errMaybe
+
+tgProcessMessage :: Monad m => Logger m -> TgApi m -> UserMap -> (Int, String) -> m UserMap
+tgProcessMessage logger tgApi userMap (chatid, messageText) = do
+  (op, msg) <- case messageText of
+    "/help" -> return (ReplyOnce, "this is help message!")
+    ('/' : 'r' : 'e' : 'p' : 'e' : 'a' : 't' : ' ' : (parseNumber -> Just n)) -> return (Repeat n, "New repeat setting stored: " ++ show n)
+    _ -> return (Reply, messageText)
+  let storedRptCnt = fromMaybe 3 (Map.lookup chatid userMap)
+  let newRepCnt = newRepeatCount op storedRptCnt
+  replicateM_ (repeatCount op newRepCnt) (doSendMsg msg)
+  return $ Map.insert chatid newRepCnt userMap
+  where
+    doSendMsg msg' = do
+      sendResult <- tgSendMessage tgApi chatid msg'
+      case sendResult of
+        Left err -> logError logger $ "Telegram.sendMessage FAIL decoding json response: " ++ err
+        Right _ -> logInfo logger $ "Telegram.sendMessage OK chat_id " ++ show chatid
+
+type UserMap = Map.Map Int Int
+
+data CommpandOp = Repeat Int | ReplyOnce | Reply
+
+newRepeatCount :: CommpandOp -> Int -> Int
+newRepeatCount (Repeat n) _ = n
+newRepeatCount _ x = x
+
+repeatCount :: CommpandOp -> Int -> Int
+repeatCount Reply n = n
+repeatCount _ _ = 1
+
+parseNumber :: [Char] -> Maybe Int
+parseNumber x = if null digits then Nothing else Just . read $ digits
+  where
+    digits = filter isDigit x

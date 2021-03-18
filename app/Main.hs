@@ -9,9 +9,7 @@ import Control.Monad.State
 import Data.Aeson (eitherDecode)
 import qualified Data.ByteString.Char8 as BS
 import qualified Data.ByteString.Lazy as LBS
-import Data.Char (isDigit)
 import qualified Data.Map as Map
-import Data.Maybe (fromMaybe)
 import Data.Time (getCurrentTime)
 import Dhall (auto, input)
 import GHC.IO.Handle.FD (stderr)
@@ -29,50 +27,25 @@ fetchJSON url = do
   res <- httpBS req
   return (getResponseStatus res, getResponseBody res)
 
-data CommpandOp = Repeat Int | ReplyOnce | Reply
+type TgState m = (L.Logger m, L.TgApi m, L.UserMap)
 
-newRepeatCount :: CommpandOp -> Int -> Int
-newRepeatCount (Repeat n) _ = n
-newRepeatCount _ x = x
+tgState :: Monad m => StateT (TgState m) m (TgState m)
+tgState = do get
 
-repeatCount :: CommpandOp -> Int -> Int
-repeatCount Reply n = n
-repeatCount _ _ = 1
-
-parseNumber :: [Char] -> Maybe Int
-parseNumber x = if null digits then Nothing else Just . read $ digits
-  where
-    digits = filter isDigit x
-
-tgProcessMessage :: L.Logger IO -> L.TgApi IO -> UserMap -> (Int, String) -> IO UserMap
-tgProcessMessage logger tgApi userMap (chatid, messageText) = do
-  (op, msg) <- case messageText of
-    "/help" -> return (ReplyOnce, "this is help message!")
-    ('/' : 'r' : 'e' : 'p' : 'e' : 'a' : 't' : ' ' : (parseNumber -> Just n)) -> return (Repeat n, "New repeat setting stored: " ++ show n)
-    _ -> return (Reply, messageText)
-  let storedRptCnt = fromMaybe 3 (Map.lookup chatid userMap)
-  let newRepCnt = newRepeatCount op storedRptCnt
-  replicateM_ (repeatCount op newRepCnt) (doSendMsg msg)
-  return $ Map.insert chatid newRepCnt userMap
-  where
-    doSendMsg msg' = do
-      sendResult <- L.tgSendMessage tgApi chatid msg'
-      case sendResult of
-        Left err -> L.logError logger $ "Telegram.sendMessage FAIL decoding json response: " ++ err
-        Right _ -> L.logInfo logger $ "Telegram.sendMessage OK chat_id " ++ show chatid
-
-type UserMap = Map.Map Int Int
-
-type TgState m = (L.Logger m, L.TgApi m, UserMap)
+tgLogger :: Monad m => StateT (TgState m) m (L.Logger m)
+tgLogger = do
+  (l, _, _) <- tgState
+  return l
 
 tgLoop :: Int -> StateT (TgState IO) IO ()
 tgLoop offset = do
-  (logger, api, userMap) <- get
+  (_, api, userMap) <- get
+  logger <- tgLogger
   eitherUpdates <- lift (L.tgGetUpdates api offset)
   case eitherUpdates of
     Right updates -> do
       lift ((if null updates then L.logDebug else L.logInfo) logger $ formatUpdatesLog updates)
-      userMap' <- lift (foldM (tgProcessMessage logger api) userMap $ L.tgGetChats updates)
+      userMap' <- lift (foldM (L.tgProcessMessage logger api) userMap $ L.tgGetChats updates)
       put (logger, api, userMap')
       tgLoop (L.tgNextOffset offset updates)
     Left err -> lift (L.logError logger $ "Failed to get updates: " ++ err)

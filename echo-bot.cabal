@@ -4,7 +4,7 @@ cabal-version: 1.12
 --
 -- see: https://github.com/sol/hpack
 --
--- hash: 9024a7e9b0088d8e3c0d477f3d0914eb3cd46950891611965fc60f2abb3b29af
+-- hash: eec6fa81475ab9ee4cf2c907ffcb626e83b43844525744b43f606fb5970af2a8
 
 name:           echo-bot
 version:        0.1.0.0
@@ -31,9 +31,11 @@ library
     , lens-aeson
     , mtl
     , random
+    , raw-strings-qq
     , text
     , text-manipulate
     , time
+    , unordered-containers
   default-language: Haskell2010
 
 executable echo-bot-exe
@@ -56,9 +58,11 @@ executable echo-bot-exe
     , lens-aeson
     , mtl
     , random
+    , raw-strings-qq
     , text
     , text-manipulate
     , time
+    , unordered-containers
   default-language: Haskell2010
 
 test-suite spec
@@ -66,6 +70,7 @@ test-suite spec
   main-is: Spec.hs
   other-modules:
       LibModuleSpec
+      TypesSpec
       Paths_echo_bot
   hs-source-dirs:
       test
@@ -84,9 +89,11 @@ test-suite spec
     , mtl
     , network-uri
     , random
+    , raw-strings-qq
     , split
     , text
     , text-manipulate
     , time
+    , unordered-containers
   default-language: Haskell2010
   build-tool-depends: hspec-discover:hspec-discover == 2.*

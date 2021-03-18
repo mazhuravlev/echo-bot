@@ -1,5 +1,5 @@
-name:                echo-bot
-version:             0.1.0.0
+name: echo-bot
+version: 0.1.0.0
 
 dependencies:
   - base >= 4.7 && < 5
@@ -16,28 +16,30 @@ dependencies:
   - time
   - mtl
   - containers
+  - unordered-containers
+  - raw-strings-qq
 
 library:
   ghc-options:
     - -Wall
-  exposed-modules: 
+  exposed-modules:
     - LibModule
     - Types
   source-dirs: src
 
 executables:
   echo-bot-exe:
-    main:                Main.hs
-    source-dirs:         app
+    main: Main.hs
+    source-dirs: app
     ghc-options:
       - -Wall
     dependencies:
-    - echo-bot
+      - echo-bot
 
 tests:
   spec:
     defaults: hspec/hspec@master
-    dependencies: 
+    dependencies:
       - echo-bot
       - network-uri
       - split
