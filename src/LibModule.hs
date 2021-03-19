@@ -11,10 +11,13 @@ import Data.List (stripPrefix)
 import qualified Data.Text as Text
 import Data.Text.Manipulate (toCamel, toSnake)
 import Dhall (FromDhall, Generic, Natural)
+import qualified Data.ByteString.Char8 as BS
 
 type UserMap = Map.Map Int Int
 
 type LogFn m = String -> m ()
+
+type HttpR m = (String -> m BS.ByteString)
 
 data Logger m = Logger
   { logError :: LogFn m,
@@ -51,7 +54,7 @@ data VkConfig = VkConfig
   }
   deriving (Generic, Show, FromDhall)
 
-data BotType = VK | Telegram deriving (Show, Generic, FromDhall)
+data BotType = Vk | Telegram deriving (Show, Generic, FromDhall)
 
 data BotConfig = BotConfig
   { telegramConfig :: TelegramConfig,

@@ -14,15 +14,9 @@ import qualified LibModule as L
 import qualified Network.HTTP.Simple as Http
 import Network.HTTP.Types (Status)
 import System.IO (hPutStrLn)
+import System.Random (randomIO)
 import qualified Telegram
 import qualified Vk
-
--- TODO: add configurable timeout for longpolling support
-fetchJSON :: String -> IO (Status, BS.ByteString)
-fetchJSON url = do
-  req <- Http.parseRequest url
-  res <- Http.httpBS req
-  return (Http.getResponseStatus res, Http.getResponseBody res)
 
 main :: IO ()
 main = do
@@ -33,12 +27,9 @@ main = do
       let logger = L.mkLogger logFn (L.botLogLevel config) Data.Time.getCurrentTime
       L.logInfo logger $ "Starting " ++ show (L.botType config) ++ " bot"
       case L.botType config of
-        L.VK -> do
-          let vkConf = L.vkConfig config
-           in Vk.loop
-                logger
-                (Vk.genVkApiUrl $ L.vkToken vkConf)
-                (L.vkGroupId vkConf)
+        L.Vk -> do
+          (api, initOffset) <- Vk.mkApi logger (L.vkConfig config) httpFn randomIO
+          evalStateT (Vk.loop initOffset) (logger, api, Map.empty)
         L.Telegram -> do
           evalStateT (Telegram.loop 0) (logger, Telegram.mkApi (L.telegramConfig config) httpFn, Map.empty)
     Left err -> do
@@ -49,3 +40,10 @@ main = do
       | otherwise = putStrLn
     printStderr = hPutStrLn stderr
     httpFn = fmap snd <$> fetchJSON
+
+-- TODO: add configurable timeout for longpolling support
+fetchJSON :: String -> IO (Status, BS.ByteString)
+fetchJSON url = do
+  req <- Http.parseRequest url
+  res <- Http.httpBS req
+  return (Http.getResponseStatus res, Http.getResponseBody res)

@@ -6,101 +6,134 @@
 module Vk where
 
 import Control.Lens (preview)
+import Control.Monad.State (StateT, get, lift)
+import Data.Aeson (eitherDecode)
 import Data.Aeson.Lens (AsNumber (_Number), key, _String)
-import qualified Data.ByteString.Char8 as BS
-import Data.List (intercalate)
-import Data.Text (unpack)
 import Data.Aeson.Types
+import qualified Data.ByteString.Char8 as BS
+import qualified Data.ByteString.Lazy as LBS
+import Data.List (intercalate)
+--import qualified Data.Map as Map
+import Data.Text (unpack)
 import Dhall (Generic)
 import qualified LibModule as L
-import qualified Data.ByteString.Lazy as LBS
-import Data.Aeson (eitherDecode)
-import System.Random (randomIO)
-import Control.Concurrent (threadDelay)
-import Network.HTTP.Simple (getResponseBody, getResponseStatus, httpBS, parseRequest)
-import Network.HTTP.Types (Status)
 
--- TODO: !! REMOVE !!
-fetchJSON :: String -> IO (Status, BS.ByteString)
-fetchJSON url = do
-  req <- parseRequest url
-  res <- httpBS req
-  return (getResponseStatus res, getResponseBody res)
+type ApiUrl = String
 
-type VkApiUrl = String
+type ApiMethod = String
 
-type VkApiMethod = String
+type ApiParam = (String, String)
 
-type VkApiParam = (String, String)
+type UrlGen = (ApiMethod -> [ApiParam] -> ApiUrl)
 
-type VkUrlGen = (VkApiMethod -> [VkApiParam] -> VkApiUrl)
+type UserId = Int
 
-vkSendEcho :: L.Logger IO -> VkUrlGen -> VkUpdate -> IO ()
-vkSendEcho logger urlGen update = do
-  rnd <- randomIO :: IO Int
-  (_, json) <-
-    fetchJSON $
-      urlGen
-        "messages.send"
-        [ ("group_id", show $ vkUpdateGroupId update),
-          ("peer_id", show . vkUpdateObjectUserId . vkUpdateObject $ update),
-          ("message", vkUpdateObjectBody . vkUpdateObject $ update),
-          ("random_id", show rnd)
-        ]
-  case parseVkMessageSendResult json of
-    Right msgId -> L.logInfo logger $ "VK mesage send OK: " ++ show msgId
-    Left err -> L.logError logger $ "VK message send FAIL: " ++ err
+type Message = String
 
-loop :: L.Logger IO -> VkUrlGen -> String -> IO ()
-loop logger urlGen groupId = do
-  (_, json) <- fetchJSON $ urlGen "groups.getLongPollServer" [("group_id", groupId)]
-  case eitherDecode (LBS.fromStrict json) :: Either String LongPollServer of
-    Right longPollServer -> do
-      L.logInfo logger "Received VK longpoll server info"
-      let lpsr = longPollServerResponse longPollServer
-      let mkLpUrl =
-            vkLongpoll
-              (longPollServerResponseServer lpsr)
-              (longPollServerResponseKey lpsr)
-              "20" -- TODO: parametrize timeout
-      vkLoop mkLpUrl (longPollServerResponseTs lpsr)
-    Left err -> L.logError logger $ "VK groups.getLongPollServer FAILED:\n" ++ err
+type MessageId = Int
+
+type GroupId = Int
+
+type Token = String
+
+type Method = String
+
+type LPServer = String
+
+type LPKey = String
+
+type LPTimeout = String
+
+type LPOffset = String
+
+type LPUrl = String
+
+type State m = (L.Logger m, Api m, L.UserMap)
+
+data Api m = Api
+  { getUpdates :: LPOffset -> m (Either String Updates),
+    sendMessage :: (UserId, Message, GroupId) -> m (Either String MessageId)
+  }
+
+mkApi :: Monad m => L.Logger m -> L.VkConfig -> L.HttpR m -> m Int -> m (Api m, LPOffset)
+mkApi logger config httpReq rnd = do
+  let urlGen = genApiUrl (L.vkToken config)
+  lprJson <- httpReq (urlGen "groups.getLongPollServer" [("group_id", L.vkGroupId config)])
+  let lpE = eitherDecode . LBS.fromStrict $ lprJson
+  case lpE of
+    Right lpr -> do
+      L.logInfo logger "Received VK longpoll server settings"
+      let lp = longPollServerResponse lpr
+      let lpUrlGen = makeLpUrlGen lp
+      return (Api {getUpdates = getUpdatesFn lpUrlGen httpReq, sendMessage = sendMessageFn urlGen}, longPollServerResponseTs lp)
+    Left err -> error $ "VK receive updates FAIL: " ++ err ++ " in json: " ++ show lprJson
   where
-    vkLoop mkUrl ts = do
-      (_, lpJson) <- fetchJSON $ mkUrl ts
-      case eitherDecode (LBS.fromStrict lpJson) :: Either String VkUpdates of
-        Right updates -> do
-          L.logInfo logger $
-            "VK receive updates OK, ts = " ++ show (vkUpdatesTs updates)
-          mapM_ (vkSendEcho logger urlGen) (vkUpdatesUpdates updates)
-          vkLoop mkUrl (vkUpdatesTs updates)
-        Left err -> do
-          L.logError logger $ "VK receive updates FAIL:\n" ++ err ++ "\n"
-          threadDelay 5000000
-          vkLoop mkUrl ts
+    sendMessageFn urlGen (userId, msg, groupId) = do
+      rndId <- rnd
+      let params =
+            [ ("group_id", show groupId),
+              ("peer_id", show userId),
+              ("message", msg),
+              ("random_id", show rndId)
+            ]
+      messageResult <-
+        parseMessageSendResult
+          <$> httpReq
+            ( urlGen
+                "messages.send"
+                params
+            )
+      case messageResult of
+        Right mid -> L.logInfo logger $ "Sent VK message with id: " ++ show mid
+        Left err -> L.logError logger $ "Failed to send VK message: " ++ err ++ " with params: " ++ show params
+      return messageResult
+    getUpdatesFn lpUrlGen' http offset = eitherDecode . LBS.fromStrict <$> http (lpUrlGen' offset)
+    makeLpUrlGen = getLongpollUrl <$> longPollServerResponseServer <*> longPollServerResponseKey <*> const "20"
 
+loop :: Monad m => LPOffset -> StateT (State m) m ()
+loop offset = do
+  (logger, api, _) <- get
+  updatesE <- lift (getUpdates api offset)
+  case updatesE of
+    Right updates -> do
+      lift (logUpdates logger updates)
+      lift (mapM_ (sendMessage api) $ getChats . vkUpdatesUpdates $ updates)
+      loop (vkUpdatesTs updates)
+    Left err -> do
+      lift (L.logError logger $ "VK receive updates FAIL:\n" ++ err ++ "\n")
+      -- TODO: handle error, retry after a timeout or stop if unauthorized
+      error "VK stop"
+  where
+    logUpdates l u =
+      let cnt = length . vkUpdatesUpdates $ u
+          f = if cnt == 0 then L.logDebug else L.logInfo
+       in f l ("Received " ++ show cnt ++ " VK updates")
 
-genVkApiUrl :: String -> String -> [(String, String)] -> String
-genVkApiUrl token method params =
+getChats :: [Update] -> [(UserId, String, GroupId)]
+getChats = map f
+  where
+    f = (,,) <$> vkUpdateObjectUserId . vkUpdateObject <*> vkUpdateObjectBody . vkUpdateObject <*> vkUpdateGroupId
+
+genApiUrl :: Token -> Method -> [(String, String)] -> ApiUrl
+genApiUrl token method params =
   concat ["https://api.vk.com/method/", method, "?", paramString]
   where
     paramString =
       intercalate "&" . map (\(k, v) -> k ++ "=" ++ v) $
         ("access_token", token) : ("v", "5.139") : params
 
-vkLongpoll :: String -> String -> String -> String -> String
-vkLongpoll server skey timeout ts =
+getLongpollUrl :: LPServer -> LPKey -> LPTimeout -> LPOffset -> LPUrl
+getLongpollUrl server skey timeout ts =
   concat [server, "?act=a_check&key=", skey, "&ts=", ts, "&wait=", timeout]
 
-parseVkMessageSendResult :: BS.ByteString -> Either String Int
-parseVkMessageSendResult json = maybe err Right okMaybe
+parseMessageSendResult :: BS.ByteString -> Either String Int
+parseMessageSendResult json = maybe err Right okMaybe
   where
     okMaybe = round <$> preview (key "response" . _Number) json :: Maybe Int
     errorMsg = preview (key "error" . key "error_msg" . _String) json
     errorCode = round <$> preview (key "error" . key "error_code" . _Number) json :: Maybe Int
     errMaybe = (\m c -> unpack m ++ "; error code: " ++ show c) <$> errorMsg <*> errorCode
     err = maybe (Left $ "Unexpected error on json: " ++ show json) Left errMaybe
-
 
 data LongPollServerResponse = LongPollServerResponse
   { longPollServerResponseKey :: String,
@@ -129,7 +162,7 @@ instance FromJSON LongPollServer where
         { fieldLabelModifier = L.jsonFieldToCamelWithoutPrefix "longPollServer"
         }
 
-data VkUpdateObject = VkUpdateObject
+data UpdateObject = UpdateObject
   { vkUpdateObjectId :: Int,
     vkUpdateObjectDate :: Int,
     vkUpdateObjectUserId :: Int,
@@ -138,34 +171,34 @@ data VkUpdateObject = VkUpdateObject
   }
   deriving (Generic, Show)
 
-instance FromJSON VkUpdateObject where
+instance FromJSON UpdateObject where
   parseJSON =
     genericParseJSON
       defaultOptions
         { fieldLabelModifier = L.jsonFieldToSnakeWithoutPrefix "vkUpdateObject"
         }
 
-data VkUpdate = VkUpdate
+data Update = Update
   { vkUpdateType :: String,
-    vkUpdateObject :: VkUpdateObject,
+    vkUpdateObject :: UpdateObject,
     vkUpdateGroupId :: Int
   }
   deriving (Generic, Show)
 
-instance FromJSON VkUpdate where
+instance FromJSON Update where
   parseJSON =
     genericParseJSON
       defaultOptions
         { fieldLabelModifier = L.jsonFieldToSnakeWithoutPrefix "vkUpdate"
         }
 
-data VkUpdates = VkUpdates
+data Updates = Updates
   { vkUpdatesTs :: String,
-    vkUpdatesUpdates :: [VkUpdate]
+    vkUpdatesUpdates :: [Update]
   }
   deriving (Generic, Show)
 
-instance FromJSON VkUpdates where
+instance FromJSON Updates where
   parseJSON =
     genericParseJSON
       defaultOptions

@@ -8,7 +8,6 @@ module Telegram where
 import Control.Monad.State
 import Data.Aeson (eitherDecode)
 import Data.Aeson.Types
-import qualified Data.ByteString.Char8 as BS
 import qualified Data.ByteString.Lazy as LBS
 import Data.Char (isDigit)
 import qualified Data.HashMap.Strict as HM
@@ -95,7 +94,7 @@ loop offset = do
         ++ (show . length $ updates')
         ++ " Telegram updates"
 
-mkApi :: Monad m => L.TelegramConfig -> (String -> m BS.ByteString) -> Api m
+mkApi :: Monad m => L.TelegramConfig -> L.HttpR m -> Api m
 mkApi config httpReq = Api {getUpdates = getUpdatesFn, sendMessage = sendMessageFn}
   where
     getUpdatesFn offset = do

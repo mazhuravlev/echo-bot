@@ -11,21 +11,21 @@ import qualified Data.ByteString.Char8 as BS
 import Data.Maybe (fromJust, isJust)
 import Test.Hspec
 import Text.RawString.QQ
-import qualified Types as T
+import qualified Telegram as Tg
 
 spec :: Spec
 spec = do
   describe "Updates" $ do
     it "Should deserialize Updates json" $ do
-      let actual = Aeson.decode updatesJson :: Maybe T.Updates
+      let actual = Aeson.decode updatesJson :: Maybe Tg.Updates
       isJust actual `shouldBe` True
     it "Should deserialize Updates json properly" $ do
-      let updates = T.updatesResult . fromJust . Aeson.decode $ updatesJson :: [T.Update]
+      let updates = Tg.updatesResult . fromJust . Aeson.decode $ updatesJson :: [Tg.Update]
       let editedUpdate = head updates
-      (T.tgMessageType . T.message $ editedUpdate) `shouldBe` T.EditedMessage
+      (Tg.tgMessageType . Tg.message $ editedUpdate) `shouldBe` Tg.EditedMessage
 
       let update = updates !! 1
-      (T.tgMessageType . T.message $ update) `shouldBe` T.NewMessage
+      (Tg.tgMessageType . Tg.message $ update) `shouldBe` Tg.NewMessage
 
 updatesJson =
   [r|
