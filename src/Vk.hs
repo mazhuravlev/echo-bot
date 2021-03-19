@@ -6,7 +6,7 @@
 module Vk where
 
 import Control.Lens (preview)
-import Control.Monad.State (StateT, get, lift)
+import Control.Monad.State (MonadState (put), StateT, get, lift, runState)
 import Data.Aeson (eitherDecode)
 import Data.Aeson.Lens (AsNumber (_Number), key, _String)
 import Data.Aeson.Types
@@ -26,10 +26,6 @@ type ApiParam = (String, String)
 
 type UrlGen = (ApiMethod -> [ApiParam] -> ApiUrl)
 
-type UserId = Int
-
-type Message = String
-
 type MessageId = Int
 
 type GroupId = Int
@@ -48,11 +44,11 @@ type LPOffset = String
 
 type LPUrl = String
 
-type State m = (L.Logger m, Api m, L.UserMap)
+type State m = (L.Logger m, Api m, L.MessageProcessor, L.UserMap)
 
 data Api m = Api
   { getUpdates :: LPOffset -> m (Either String Updates),
-    sendMessage :: (UserId, Message, GroupId) -> m (Either String MessageId)
+    sendMessage :: L.Message -> m (Either String MessageId)
   }
 
 mkApi :: Monad m => L.Logger m -> L.VkConfig -> L.HttpR m -> m Int -> m (Api m, LPOffset)
@@ -68,10 +64,10 @@ mkApi logger config httpReq rnd = do
       return (Api {getUpdates = getUpdatesFn lpUrlGen httpReq, sendMessage = sendMessageFn urlGen}, longPollServerResponseTs lp)
     Left err -> error $ "VK receive updates FAIL: " ++ err ++ " in json: " ++ show lprJson
   where
-    sendMessageFn urlGen (userId, msg, groupId) = do
+    sendMessageFn urlGen (userId, msg) = do
       rndId <- rnd
       let params =
-            [ ("group_id", show groupId),
+            [ ("group_id", L.vkGroupId config),
               ("peer_id", show userId),
               ("message", msg),
               ("random_id", show rndId)
@@ -92,12 +88,14 @@ mkApi logger config httpReq rnd = do
 
 loop :: Monad m => LPOffset -> StateT (State m) m ()
 loop offset = do
-  (logger, api, _) <- get
+  (logger, api, mp, userMap) <- get
   updatesE <- lift (getUpdates api offset)
   case updatesE of
     Right updates -> do
       lift (logUpdates logger updates)
-      lift (mapM_ (sendMessage api) $ getChats . vkUpdatesUpdates $ updates)
+      let (is, newUserMap) = runState (mp $ getChats . vkUpdatesUpdates $ updates) userMap
+      put (logger, api, mp, newUserMap)
+      lift (mapM_ (sendMessage api) $ concatMap (\(L.SendMessage rep m) -> replicate (fromIntegral rep) m) is)
       loop (vkUpdatesTs updates)
     Left err -> do
       lift (L.logError logger $ "VK receive updates FAIL:\n" ++ err ++ "\n")
@@ -109,10 +107,10 @@ loop offset = do
           f = if cnt == 0 then L.logDebug else L.logInfo
        in f l ("Received " ++ show cnt ++ " VK updates")
 
-getChats :: [Update] -> [(UserId, String, GroupId)]
+getChats :: [Update] -> [L.Message]
 getChats = map f
   where
-    f = (,,) <$> vkUpdateObjectUserId . vkUpdateObject <*> vkUpdateObjectBody . vkUpdateObject <*> vkUpdateGroupId
+    f = (,) <$> vkUpdateObjectUserId . vkUpdateObject <*> vkUpdateObjectBody . vkUpdateObject
 
 genApiUrl :: Token -> Method -> [(String, String)] -> ApiUrl
 genApiUrl token method params =

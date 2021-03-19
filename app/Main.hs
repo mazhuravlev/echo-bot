@@ -25,13 +25,14 @@ main = do
   case maybeBotConfig of
     Right config -> do
       let logger = L.mkLogger logFn (L.botLogLevel config) Data.Time.getCurrentTime
+      let messageProcessor = L.mkMessageProcessor (L.helpMessage config) (L.defaultRepeatCount config)
       L.logInfo logger $ "Starting " ++ show (L.botType config) ++ " bot"
       case L.botType config of
         L.Vk -> do
           (api, initOffset) <- Vk.mkApi logger (L.vkConfig config) httpFn randomIO
-          evalStateT (Vk.loop initOffset) (logger, api, Map.empty)
+          evalStateT (Vk.loop initOffset) (logger, api, messageProcessor, Map.empty)
         L.Telegram -> do
-          evalStateT (Telegram.loop 0) (logger, Telegram.mkApi (L.telegramConfig config) httpFn, Map.empty)
+          evalStateT (Telegram.loop 0) (logger, Telegram.mkApi (L.telegramConfig config) httpFn, messageProcessor, Map.empty)
     Left err -> do
       printStderr $ "BotConfig read error:\n" ++ show err
   where

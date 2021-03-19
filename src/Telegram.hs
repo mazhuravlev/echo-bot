@@ -9,17 +9,13 @@ import Control.Monad.State
 import Data.Aeson (eitherDecode)
 import Data.Aeson.Types
 import qualified Data.ByteString.Lazy as LBS
-import Data.Char (isDigit)
 import qualified Data.HashMap.Strict as HM
-import qualified Data.Map as Map
-import Data.Maybe (fromJust, fromMaybe)
+import Data.Maybe (fromJust)
 import Data.Text (Text)
 import Dhall (Generic)
 import qualified LibModule as L
 
-data CommpandOp = Repeat Int | ReplyOnce | Reply
-
-type TgState m = (L.Logger m, Api m, L.UserMap)
+type TgState m = (L.Logger m, Api m, L.MessageProcessor, L.UserMap)
 
 type ApiUrl = String
 
@@ -27,7 +23,7 @@ type ChatId = Int
 
 data Api m = Api
   { getUpdates :: Int -> m (Either String [Update]),
-    sendMessage :: ChatId -> String -> m (Either String String)
+    sendMessage :: L.Message-> m (Either String String)
   }
 
 data ApiUrlGen = ApiUrlGen
@@ -35,54 +31,25 @@ data ApiUrlGen = ApiUrlGen
     sendMessageUrl :: ChatId -> String -> ApiUrl
   }
 
-processMessage :: Monad m => L.Logger m -> Api m -> L.UserMap -> (Int, String) -> m L.UserMap
-processMessage logger tgApi userMap (chatid, messageText) = do
-  (op, msg) <- case messageText of
-    "/help" -> return (ReplyOnce, "this is help message!")
-    ('/' : 'r' : 'e' : 'p' : 'e' : 'a' : 't' : ' ' : (parseNumber -> Just n)) -> return (Repeat n, "New repeat setting stored: " ++ show n)
-    _ -> return (Reply, messageText)
-  let storedRptCnt = fromMaybe 3 (Map.lookup chatid userMap)
-  let newRepCnt = newRepeatCount op storedRptCnt
-  replicateM_ (repeatCount op newRepCnt) (doSendMsg msg)
-  return $ Map.insert chatid newRepCnt userMap
-  where
-    doSendMsg msg' = do
-      sendResult <- sendMessage tgApi chatid msg'
-      case sendResult of
-        Left err -> L.logError logger $ "Telegram.sendMessage FAIL decoding json response: " ++ err
-        Right _ -> L.logInfo logger $ "Telegram.sendMessage OK chat_id " ++ show chatid
-
-newRepeatCount :: CommpandOp -> Int -> Int
-newRepeatCount (Repeat n) _ = n
-newRepeatCount _ x = x
-
-repeatCount :: CommpandOp -> Int -> Int
-repeatCount Reply n = n
-repeatCount _ _ = 1
-
-parseNumber :: [Char] -> Maybe Int
-parseNumber x = if null digits then Nothing else Just . read $ digits
-  where
-    digits = filter isDigit x
-
 getState :: Monad m => StateT (TgState m) m (TgState m)
 getState = do get
 
 getLogger :: Monad m => StateT (TgState m) m (L.Logger m)
 getLogger = do
-  (l, _, _) <- getState
+  (l, _, _, _) <- getState
   return l
 
 loop :: Monad m => Int -> StateT (TgState m) m ()
 loop offset = do
-  (_, api, userMap) <- get
+  (_, api, mp, userMap) <- get
   logger <- getLogger
   eitherUpdates <- lift (getUpdates api offset)
   case eitherUpdates of
     Right updates -> do
       lift ((if null updates then L.logDebug else L.logInfo) logger $ formatUpdatesLog updates)
-      userMap' <- lift (foldM (processMessage logger api) userMap $ getChats updates)
-      put (logger, api, userMap')
+      let (is, newUserMap) = runState (mp $ getChats updates) userMap
+      put (logger, api, mp, newUserMap)
+      lift (mapM_ (sendMessage api) $ concatMap (\(L.SendMessage rep m) -> replicate (fromIntegral rep) m) is)
       loop (nextOffset offset updates)
     Left err -> do
       lift (L.logError logger $ "Failed to get updates: " ++ err)
@@ -103,12 +70,12 @@ mkApi config httpReq = Api {getUpdates = getUpdatesFn, sendMessage = sendMessage
         Left err -> jsonDecodeError err updatesJson
         Right updates@(updatesOk -> True) -> Right . updatesResult $ updates
         _ -> Left "Unexpected error occured on receveing updates"
-    sendMessageFn cid msg = do
-      messageResultjson <- httpReq $ sendMessageUrl urlGen cid msg
+    sendMessageFn (uid, msg) = do
+      messageResultjson <- httpReq $ sendMessageUrl urlGen uid msg
       return $ case eitherDecode (LBS.fromStrict messageResultjson) :: Either String SendMessageResult of
         Left err -> jsonDecodeError err messageResultjson
-        Right (sendMessageOk -> True) -> Right $ "Message sent to chat " ++ show cid
-        _ -> Left $ "Failed to send message to chat " ++ show cid
+        Right (sendMessageOk -> True) -> Right $ "Message sent to chat " ++ show uid
+        _ -> Left $ "Failed to send message to chat " ++ show uid
     urlGen = mkApiUrlGen config
     jsonDecodeError err json = Left $ "Response JSON decode error: " ++ err ++ show json
 
