@@ -32,7 +32,7 @@ type RepeatCount = Natural
 
 type MessageProcessor = [Message] -> State UserMap [Instruction]
 
-data Instruction = SendMessage RepeatCount Message
+data Instruction = SendMessage RepeatCount Message deriving (Show, Eq)
 
 type HelpMessage = String
 

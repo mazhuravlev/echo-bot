@@ -1,5 +1,4 @@
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE ViewPatterns #-}
 
 module Main where
 
@@ -42,7 +41,7 @@ main = do
     printStderr = hPutStrLn stderr
     httpFn = fmap snd <$> fetchJSON
 
--- TODO: add configurable timeout for longpolling support
+-- TODO: add configurable timeout for long polling support
 fetchJSON :: String -> IO (Status, BS.ByteString)
 fetchJSON url = do
   req <- Http.parseRequest url

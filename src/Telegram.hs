@@ -23,7 +23,7 @@ type ChatId = Int
 
 data Api m = Api
   { getUpdates :: Int -> m (Either String [Update]),
-    sendMessage :: L.Message-> m (Either String String)
+     sendMessage :: L.Message-> m (Either String String)
   }
 
 data ApiUrlGen = ApiUrlGen
@@ -56,9 +56,9 @@ loop offset = do
       loop offset
   return ()
   where
-    formatUpdatesLog updates' =
+    formatUpdatesLog updates =
       "Received "
-        ++ (show . length $ updates')
+        ++ (show . length $ updates)
         ++ " Telegram updates"
 
 mkApi :: Monad m => L.TelegramConfig -> L.HttpR m -> Api m
@@ -71,9 +71,9 @@ mkApi config httpReq = Api {getUpdates = getUpdatesFn, sendMessage = sendMessage
         Right updates@(updatesOk -> True) -> Right . updatesResult $ updates
         _ -> Left "Unexpected error occured on receveing updates"
     sendMessageFn (uid, msg) = do
-      messageResultjson <- httpReq $ sendMessageUrl urlGen uid msg
-      return $ case eitherDecode (LBS.fromStrict messageResultjson) :: Either String SendMessageResult of
-        Left err -> jsonDecodeError err messageResultjson
+      messageResultJson <- httpReq $ sendMessageUrl urlGen uid msg
+      return $ case eitherDecode (LBS.fromStrict messageResultJson) :: Either String SendMessageResult of
+        Left err -> jsonDecodeError err messageResultJson
         Right (sendMessageOk -> True) -> Right $ "Message sent to chat " ++ show uid
         _ -> Left $ "Failed to send message to chat " ++ show uid
     urlGen = mkApiUrlGen config
@@ -98,9 +98,9 @@ mkApiUrlGen config =
           show offset,
           "&timeout=" ++ show (L.telegramTimeout config)
         ]
-    sendMessageFn chatid messageText =
+    sendMessageFn uid messageText =
       concat
-        [tgBaseUrl, "/sendMessage?chat_id=", show chatid, "&text=", messageText]
+        [tgBaseUrl, "/sendMessage?chat_id=", show uid, "&text=", messageText]
 
 data Chat = Chat
   { chatId :: Int,
@@ -144,11 +144,11 @@ instance FromJSON Update where
     msg <-
       withObject
         "Message"
-        ( \mobj -> do
-            mid <- mobj .: "message_id"
-            t <- mobj .: "text"
+        ( \m -> do
+            mid <- m .: "message_id"
+            t <- m .: "text"
             -- TODO: get rid of fromJust
-            c <- fromJust (parseJSON <$> HM.lookup "chat" mobj) :: Parser Chat
+            c <- fromJust (parseJSON <$> HM.lookup "chat" m) :: Parser Chat
             return Message {tgMessageType = msgType, message_id = mid, text = t, chat = c}
         )
         messageObj

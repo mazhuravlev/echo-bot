@@ -3,3 +3,6 @@
 config.dhall
 .vscode
 .history
+/echo-bot.iml
+.idea
+out

@@ -7,7 +7,7 @@ module TypesSpec
 where
 
 import qualified Data.Aeson as Aeson
-import qualified Data.ByteString.Char8 as BS
+import qualified Data.ByteString.Lazy as LBS
 import Data.Maybe (fromJust, isJust)
 import Test.Hspec
 import Text.RawString.QQ
@@ -27,6 +27,7 @@ spec = do
       let update = updates !! 1
       (Tg.tgMessageType . Tg.message $ update) `shouldBe` Tg.NewMessage
 
+updatesJson :: LBS.ByteString
 updatesJson =
   [r|
 {

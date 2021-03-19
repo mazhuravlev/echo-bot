@@ -3,13 +3,15 @@ module LibModuleSpec
   )
 where
 
+import Control.Monad.State (evalState)
 import qualified Data.ByteString.Char8 as BS
 import Data.List.Split (splitOn)
+import qualified Data.Map as Map
 import Data.Maybe (fromJust)
 import qualified LibModule as L
 import Network.URI (URI, parseURI, uriAuthority, uriQuery, uriRegName)
-import Test.Hspec
 import qualified Telegram as Tg
+import Test.Hspec
 import qualified Vk
 
 testTelegramConfig :: L.TelegramConfig
@@ -26,6 +28,9 @@ assertQuery :: [Char] -> [[Char]] -> Expectation
 assertQuery query = (`shouldBe` True) . all (`elem` queryParts)
   where
     queryParts = splitOn "&" . drop 1 $ query
+
+extractRepeat :: L.Instruction -> L.RepeatCount
+extractRepeat (L.SendMessage r _) = r
 
 spec :: Spec
 spec = do
@@ -49,3 +54,18 @@ spec = do
       Tg.nextOffset 3 [] `shouldBe` 3
     it "Should return updates max offset incremented by 1" $ do
       Tg.nextOffset 3 [Tg.Update 123 undefined, Tg.Update 234 undefined] `shouldBe` 235
+
+  let userId = 37
+  let msg = "sometext"
+  let helpMsg = "help message"
+  let mp = L.mkMessageProcessor helpMsg 3
+  describe "MessageProcessor" $ do
+    it "Should produce help instruction" $ do
+      let actual = head $ evalState (mp [(userId, "/help")]) Map.empty
+      actual `shouldBe` L.SendMessage 1 (userId, helpMsg)
+    it "Should produce echo with default repeat count" $ do
+      let actual = head $ evalState (mp [(userId, msg)]) Map.empty
+      extractRepeat actual `shouldBe` 3
+    it "Should produce echo with user defined repeat count" $ do
+      let actual = head $ evalState (mp [(userId, msg)]) (Map.fromList [(userId, 2)])
+      extractRepeat actual `shouldBe` 2
